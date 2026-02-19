@@ -1,138 +1,110 @@
-# 📊 Market Risk VaR Engine
+# Market Risk VaR Engine
 
-A multi-asset portfolio risk monitoring toolkit implementing historical and parametric Value-at-Risk (VaR), Expected Shortfall (ES), backtesting, stress testing, and portfolio risk decomposition.
+Multi-asset portfolio market risk toolkit with historical and parametric Value-at-Risk (VaR), Expected Shortfall (ES), backtesting, stress testing, and component VaR decomposition.
 
-This project replicates a simplified daily market risk monitoring workflow for a trading portfolio.
+This project mirrors a simplified daily risk workflow used in market risk monitoring.
 
----
+## Overview
 
-## 🔎 Overview
+Core capabilities:
 
-This engine performs:
-
-- Portfolio return aggregation
+- Portfolio return aggregation from asset-level returns
 - Historical VaR (95%, 99%)
 - Parametric Normal VaR (rolling volatility)
-- EWMA (RiskMetrics-style) VaR
+- EWMA VaR (RiskMetrics style)
 - Rolling covariance-matrix VaR
-- Historical Expected Shortfall (ES / CVaR)
-- VaR backtesting (exception counts)
-- Kupiec Unconditional Coverage test
-- Exception reporting (CSV export)
+- Historical ES (CVaR)
+- VaR backtesting (exception counts + Kupiec UC test)
+- Exception report export (CSV-ready table)
 - Stress scenario analysis
-- Component (marginal) VaR decomposition
-- Pre-trade risk impact simulation
+- Component VaR decomposition and pre-trade risk impact checks
 
-All metrics are computed in both return space and dollar P&L space.
+All risk measures can be computed in return space and scaled to dollar P&L.
 
----
+## Models
 
-## 🧠 Models Implemented
+### 1. Historical VaR
 
-### 1️⃣ Historical VaR
+Empirical rolling quantile over a lookback window:
 
-Rolling empirical quantile over a 252-day window.
+```text
+VaR_alpha(t) = Quantile_alpha(r_{t-window+1:t})
+```
 
-VaR*α(t) = Quantile*α(r\_{t-252:t})
+### 2. Parametric VaR (Normal)
 
----
+```text
+VaR_alpha(t) = mu_t + z_alpha * sigma_t
+```
 
-### 2️⃣ Parametric VaR (Rolling Normal)
+- `mu_t`: rolling mean (optional)
+- `sigma_t`: rolling standard deviation
+- `z_alpha`: Normal quantile from `scipy.stats.norm.ppf(alpha)`
 
-VaR*α(t) = μ_t + z*α σ_t
+### 3. EWMA VaR (RiskMetrics)
 
-Where:
+```text
+sigma_t^2 = lambda * sigma_{t-1}^2 + (1 - lambda) * r_{t-1}^2
+VaR_alpha(t) = mu_t + z_alpha * sigma_t
+```
 
-- μ_t = rolling mean
-- σ_t = rolling standard deviation
-- z_α = Normal quantile via `scipy.stats.norm.ppf`
+### 4. Covariance-Matrix VaR
 
----
+```text
+sigma_p(t) = sqrt(w^T * Sigma_t * w)
+VaR_alpha(t) = mu_p(t) + z_alpha * sigma_p(t)
+```
 
-### 3️⃣ EWMA VaR (RiskMetrics)
+### 5. Expected Shortfall (ES)
 
-Volatility estimated using:
+```text
+ES_alpha(t) = E[r | r <= VaR_alpha(t)]
+```
 
-σ²*t = λ σ²*{t-1} + (1 − λ) r²\_{t-1}
+### 6. Backtesting
 
-Captures volatility clustering and faster regime shifts.
+- Exception (breach) tracking
+- Kupiec (1995) unconditional coverage test
+- PASS/FAIL interpretation via p-value threshold
 
----
+### 7. Component VaR
 
-### 4️⃣ Covariance-Matrix VaR
+Parametric contribution of each asset to total VaR:
 
-Portfolio volatility computed via:
+```text
+ComponentVaR_i = w_i * z_alpha * ((Sigma * w)_i / sigma_p)
+```
 
-σ_p = sqrt(wᵀ Σ w)
+## Project Structure
 
-Incorporates cross-asset correlations and structural risk concentration.
+```text
+src/
+  data_loader.py   # prices and return construction
+  portfolio.py     # portfolio definition and aggregation
+  var_models.py    # VaR / ES / component VaR models
+  backtest.py      # breaches, summaries, Kupiec test
+  scaling.py       # return <-> dollar scaling
+  plots.py         # plotting utilities
+notebooks/
+  07_var_analysis.ipynb
+  08_var_analysis.ipynb
+  09_var_analysis.ipynb
+```
 
----
+## Typical Outputs
 
-### 5️⃣ Expected Shortfall (ES / CVaR)
+- VaR overlays (historical, parametric, EWMA, covariance)
+- Exception tables (worst breaches first)
+- Kupiec UC summary metrics
+- Stress scenario comparison tables/charts
+- Component VaR contribution charts
 
-ES*α = E[r | r ≤ VaR*α]
+Output locations used in notebooks:
 
-Captures tail severity beyond the VaR threshold.
+- Figures: `outputs/figures/`
+- Exception and summary tables: `outputs/`
 
----
-
-### 6️⃣ VaR Backtesting & Validation
-
-- Exception rate tracking
-- Kupiec (1995) Unconditional Coverage test
-- PASS / FAIL statistical interpretation
-
----
-
-### 7️⃣ Stress Testing
-
-Includes:
-
-- Worst historical portfolio days
-- Empirical quantile shocks
-- Cross-asset quantile scenarios
-- VaR vs ES comparison dashboard
-
----
-
-### 8️⃣ Component (Marginal) VaR
-
-Parametric decomposition of total portfolio VaR into asset contributions:
-
-Component VaR*i = w_i · z*α · ((Σ w)\_i / σ_p)
-
-Enables identification of concentration risk drivers.
-
----
-
-## 📂 Notebook Structure
-
-| Notebook                | Description                                                   |
-| ----------------------- | ------------------------------------------------------------- |
-| `07_var_analysis.ipynb` | Full VaR suite (Historical, Parametric, EWMA, Cov-Matrix, ES) |
-| `08_var_analysis.ipynb` | Stress testing and scenario analysis                          |
-| `09_var_analysis.ipynb` | Component VaR and risk contribution reporting                 |
-
----
-
-## 📈 Example Outputs
-
-- Consolidated 95% and 99% VaR overlay charts
-- VaR breach tables (CSV export)
-- Kupiec test summary table
-- Stress scenario results
-- Component VaR bar chart
-
-Figures saved to:
-outputs/figures/
-
-Exception reports saved to:
-outputs/
-
----
-
-## ⚙️ Tech Stack
+## Tech Stack
 
 - Python 3.x
 - pandas
@@ -140,30 +112,13 @@ outputs/
 - scipy
 - matplotlib
 - yfinance
-- Jupyter Notebook (VS Code + WSL)
+- Jupyter Notebook
 
----
+## Extension Ideas
 
-## 🎯 Purpose
-
-This project demonstrates:
-
-- Market risk monitoring workflow
-- Statistical model validation
-- Portfolio risk aggregation
-- Tail risk analysis
-- Pre-trade risk impact assessment
-- Risk decomposition and concentration analysis
-
-Designed to simulate core responsibilities of a bank Market Risk team overseeing multi-asset trading activity.
-
----
-
-## 🚀 Possible Extensions
-
+- Student-t VaR
+- Conditional coverage (Christoffersen)
 - EWMA covariance matrix
-- Student-t parametric VaR
-- Conditional Coverage (Christoffersen) test
-- Factor-based VaR
-- GARCH volatility modeling
-- Monte Carlo simulation VaR
+- Factor-model VaR
+- GARCH volatility
+- Monte Carlo VaR

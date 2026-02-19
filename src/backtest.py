@@ -1,17 +1,28 @@
 from __future__ import annotations
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 from scipy.stats import chi2
+
+
+def _validate_alpha(alpha: float) -> None:
+    if not 0 < alpha < 1:
+        raise ValueError("alpha must be in (0,1).")
+
+
+def _align_returns_var(returns: pd.Series, var_series: pd.Series) -> pd.DataFrame:
+    aligned = pd.concat([returns, var_series], axis=1).dropna()
+    aligned.columns = ["realized", "var"]
+    return aligned
+
 
 def var_exceptions(returns: pd.Series, var_series: pd.Series) -> pd.Series:
     """
     Exception (breach) occurs when realized return is less than VaR threshold.
     Both should be aligned time series (VaR usually negative threshold).
     """
-    aligned = pd.concat([returns, var_series], axis=1).dropna()
-    aligned.columns = ["ret", "var"]
-    breaches = aligned["ret"] < aligned["var"]
+    aligned = _align_returns_var(returns, var_series)
+    breaches = aligned["realized"] < aligned["var"]
     breaches.name = "breach"
     return breaches
 
@@ -21,8 +32,10 @@ def exception_summary(breaches: pd.Series, alpha: float) -> dict:
     Basic exception stats for VaR backtest.
     alpha = 0.05 => expected breach rate 5%
     """
-    n = int(breaches.shape[0])
-    x = int(breaches.sum())
+    _validate_alpha(alpha)
+    b = breaches.dropna().astype(bool)
+    n = int(b.shape[0])
+    x = int(b.sum())
     expected = alpha * n if n > 0 else 0.0
     rate = (x / n) if n > 0 else 0.0
     return {
@@ -31,7 +44,9 @@ def exception_summary(breaches: pd.Series, alpha: float) -> dict:
         "breaches": x,
         "expected_breaches": expected,
         "breach_rate": rate,
+        "coverage_gap": rate - alpha,
     }
+
 
 def exception_table(
     returns: pd.Series,
@@ -48,8 +63,10 @@ def exception_table(
       - breach: boolean
       - exceedance: realized - var (more negative => worse breach)
     """
-    df = pd.concat([returns, var_series], axis=1).dropna()
-    df.columns = ["realized", "var"]
+    if top_n is not None and top_n <= 0:
+        raise ValueError("top_n must be a positive integer or None.")
+
+    df = _align_returns_var(returns, var_series)
 
     df["breach"] = df["realized"] < df["var"]
     df["exceedance"] = df["realized"] - df["var"]
@@ -57,10 +74,12 @@ def exception_table(
     breaches = df[df["breach"]].copy()
     breaches = breaches.sort_values("realized")  # worst days first
 
-    if top_n is not None and top_n > 0:
+    if top_n is not None:
         breaches = breaches.head(top_n)
 
+    breaches.index.name = "date"
     return breaches
+
 
 def kupiec_test_uc(breaches: pd.Series, alpha: float) -> dict:
     """
@@ -73,6 +92,7 @@ def kupiec_test_uc(breaches: pd.Series, alpha: float) -> dict:
 
     Returns dict with LR statistic and p-value.
     """
+    _validate_alpha(alpha)
     b = breaches.dropna().astype(bool)
     n = int(b.shape[0])
     x = int(b.sum())

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 import pandas as pd
 
 
@@ -10,8 +12,9 @@ def scale_to_dollars(series: pd.Series, notional: float) -> pd.Series:
       pnl_$ = notional * return
       VaR_$ = notional * VaR_return_threshold
     """
-    if notional <= 0:
+    if not math.isfinite(notional) or notional <= 0:
         raise ValueError("notional must be positive.")
     out = series * float(notional)
-    out.name = f"{series.name}_dollars" if series.name else "dollars"
+    label = series.name or "value"
+    out.name = f"{label}_dollars"
     return out

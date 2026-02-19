@@ -1,19 +1,48 @@
 from __future__ import annotations
 
+from typing import Mapping
+
 import numpy as np
 import pandas as pd
 from scipy.stats import norm
 
 TRADING_DAYS: int = 252
 
+
+def _validate_alpha(alpha: float) -> None:
+    if not 0 < alpha < 1:
+        raise ValueError("alpha must be in (0,1).")
+
+
+def _validate_window(window: int) -> None:
+    if window < 2:
+        raise ValueError("window must be >= 2.")
+
+
+def _confidence_label(alpha: float) -> int:
+    return int(round((1.0 - alpha) * 100))
+
+
+def _normalize_weights(weights: Mapping[str, float], tickers: list[str]) -> pd.Series:
+    w = pd.Series(weights, index=tickers, dtype=float)
+    if w.isna().any():
+        raise ValueError("weights contain missing values.")
+    total = float(w.sum())
+    if np.isclose(total, 0.0):
+        raise ValueError("weights sum to zero.")
+    return w / total
+
+
 def historical_var(returns: pd.Series, window: int = TRADING_DAYS, alpha: float = 0.05) -> pd.Series:
     """
     Historical VaR on a return series.
     alpha=0.05 => 95% VaR threshold (5th percentile)
     """
-    if not 0 < alpha < 1:
-        raise ValueError("alpha must be in (0,1).")
-    return returns.rolling(window).quantile(alpha)
+    _validate_alpha(alpha)
+    _validate_window(window)
+    out = returns.rolling(window).quantile(alpha)
+    out.name = f"VaR_Historical_{_confidence_label(alpha)}"
+    return out
 
 
 def parametric_var_normal(
@@ -27,15 +56,18 @@ def parametric_var_normal(
       VaR_alpha = mu + z_alpha * sigma
     where z_alpha = norm.ppf(alpha) (negative for alpha<0.5).
     """
-    if not 0 < alpha < 1:
-        raise ValueError("alpha must be in (0,1).")
+    _validate_alpha(alpha)
+    _validate_window(window)
 
     z = norm.ppf(alpha)  # e.g., alpha=0.05 -> ~ -1.645
 
-    mu = returns.rolling(window).mean() if use_mean else 0.0
+    mu = returns.rolling(window).mean() if use_mean else pd.Series(0.0, index=returns.index)
     sigma = returns.rolling(window).std(ddof=1)
 
-    return mu + z * sigma
+    out = mu + z * sigma
+    out.name = f"VaR_Parametric_{_confidence_label(alpha)}"
+    return out
+
 
 def parametric_var_ewma_normal(
     returns: pd.Series,
@@ -57,10 +89,11 @@ def parametric_var_ewma_normal(
     - use_mean=False is common in RiskMetrics (assume mean ~ 0 daily)
     - burn_in: number of initial periods to set as NaN for stability
     """
-    if not 0 < alpha < 1:
-        raise ValueError("alpha must be in (0,1).")
+    _validate_alpha(alpha)
     if not 0 < lam < 1:
         raise ValueError("lam must be in (0,1).")
+    if burn_in < 0:
+        raise ValueError("burn_in must be >= 0.")
 
     r = returns.dropna().astype(float)
     z = norm.ppf(alpha)
@@ -82,10 +115,10 @@ def parametric_var_ewma_normal(
     if use_mean:
         mu = r.ewm(alpha=(1.0 - lam), adjust=False).mean()
     else:
-        mu = 0.0
+        mu = pd.Series(0.0, index=r.index)
 
     var = mu + z * sigma
-    var = pd.Series(var, index=r.index, name=f"VaR_EWMA_{int((1-alpha)*100)}")
+    var = pd.Series(var, index=r.index, name=f"VaR_EWMA_{_confidence_label(alpha)}")
 
     if burn_in and burn_in > 0:
         var.iloc[:burn_in] = np.nan
@@ -93,9 +126,10 @@ def parametric_var_ewma_normal(
     # Reindex to original returns index (preserve any missing dates)
     return var.reindex(returns.index)
 
+
 def parametric_var_cov_matrix(
     asset_returns: pd.DataFrame,
-    weights: dict,
+    weights: Mapping[str, float],
     window: int = TRADING_DAYS,
     alpha: float = 0.05,
     use_mean: bool = True,
@@ -109,8 +143,8 @@ def parametric_var_cov_matrix(
     asset_returns: DataFrame with columns as tickers
     weights: dict {ticker: weight}
     """
-    if not 0 < alpha < 1:
-        raise ValueError("alpha must be in (0,1).")
+    _validate_alpha(alpha)
+    _validate_window(window)
 
     tickers = list(weights.keys())
     missing = [t for t in tickers if t not in asset_returns.columns]
@@ -119,8 +153,7 @@ def parametric_var_cov_matrix(
 
     r = asset_returns[tickers].dropna().copy()
 
-    w = pd.Series(weights, index=tickers, dtype=float)
-    w = w / w.sum()
+    w = _normalize_weights(weights, tickers)
     wv = w.values.reshape(-1, 1)
 
     z = norm.ppf(alpha)
@@ -129,7 +162,7 @@ def parametric_var_cov_matrix(
     if use_mean:
         mu_p = (r @ w).rolling(window).mean()
     else:
-        mu_p = 0.0
+        mu_p = pd.Series(0.0, index=r.index)
 
     # Rolling covariance -> portfolio sigma -> VaR series
     var_list = []
@@ -141,29 +174,33 @@ def parametric_var_cov_matrix(
         sigma = window_slice.cov().values  # Sigma(t)
         sigma_p = float(np.sqrt((wv.T @ sigma @ wv)[0, 0]))
         idx_list.append(r.index[i])
-        var_list.append(mu_p.iloc[i] + z * sigma_p if use_mean else z * sigma_p)
+        var_list.append(mu_p.iloc[i] + z * sigma_p)
 
-    out = pd.Series(var_list, index=pd.Index(idx_list), name=f"VaR_Cov_{int((1-alpha)*100)}")
+    out = pd.Series(var_list, index=pd.Index(idx_list), name=f"VaR_Covariance_{_confidence_label(alpha)}")
     return out.reindex(asset_returns.index)
+
 
 def historical_es(returns: pd.Series, window: int = TRADING_DAYS, alpha: float = 0.05) -> pd.Series:
     """
     Historical Expected Shortfall (ES): average return in the tail beyond VaR.
     ES_t = mean( r | r <= VaR_alpha ) over rolling window.
     """
-    if not 0 < alpha < 1:
-        raise ValueError("alpha must be in (0,1).")
+    _validate_alpha(alpha)
+    _validate_window(window)
 
     def es_func(x: pd.Series) -> float:
         v = x.quantile(alpha)
         tail = x[x <= v]
         return float(tail.mean()) if len(tail) else float("nan")
 
-    return returns.rolling(window).apply(es_func, raw=False)
+    out = returns.rolling(window).apply(es_func, raw=False)
+    out.name = f"ES_Historical_{_confidence_label(alpha)}"
+    return out
+
 
 def component_var_cov_matrix(
     asset_returns: pd.DataFrame,
-    weights: dict,
+    weights: Mapping[str, float],
     window: int = TRADING_DAYS,
     alpha: float = 0.05,
 ) -> pd.DataFrame:
@@ -180,14 +217,16 @@ def component_var_cov_matrix(
 
     Note: This is a parametric decomposition; does not require portfolio return series.
     """
-    if not 0 < alpha < 1:
-        raise ValueError("alpha must be in (0,1).")
+    _validate_alpha(alpha)
+    _validate_window(window)
 
     tickers = list(weights.keys())
+    missing = [t for t in tickers if t not in asset_returns.columns]
+    if missing:
+        raise ValueError(f"Missing tickers in asset_returns: {missing}")
     r = asset_returns[tickers].dropna().copy()
 
-    w = pd.Series(weights, index=tickers, dtype=float)
-    w = w / w.sum()
+    w = _normalize_weights(weights, tickers)
     wv = w.values.reshape(-1, 1)
 
     z = norm.ppf(alpha)
@@ -212,5 +251,5 @@ def component_var_cov_matrix(
         idx_vals.append(r.index[i])
 
     out = pd.DataFrame(rows, index=pd.Index(idx_vals), columns=tickers)
-    out.name = f"ComponentVaR_{int((1-alpha)*100)}"
+    out.name = f"ComponentVaR_{_confidence_label(alpha)}"
     return out.reindex(asset_returns.index)

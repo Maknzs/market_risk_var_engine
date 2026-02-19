@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Iterable
+from typing import Iterable, Mapping
 
 import numpy as np
 import pandas as pd
@@ -13,12 +13,21 @@ class Portfolio:
     Simple long-only portfolio.
     weights should sum to 1.0.
     """
-    weights: Dict[str, float]
+    weights: Mapping[str, float]
+
+    def __post_init__(self) -> None:
+        if not self.weights:
+            raise ValueError("weights must not be empty.")
+        w = pd.Series(self.weights, dtype=float)
+        if w.isna().any() or not np.isfinite(w.to_numpy()).all():
+            raise ValueError("weights must be finite numeric values.")
+        if (w < 0).any():
+            raise ValueError("weights must be non-negative for a long-only portfolio.")
 
     def normalized(self) -> "Portfolio":
         w = pd.Series(self.weights, dtype=float)
         s = float(w.sum())
-        if s == 0:
+        if np.isclose(s, 0.0):
             raise ValueError("Weights sum to 0.")
         w = w / s
         return Portfolio(weights=w.to_dict())
