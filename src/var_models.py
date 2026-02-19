@@ -159,3 +159,57 @@ def historical_es(returns: pd.Series, window: int = 250, alpha: float = 0.05) ->
         return float(tail.mean()) if len(tail) else float("nan")
 
     return returns.rolling(window).apply(es_func, raw=False)
+
+def component_var_cov_matrix(
+    asset_returns: pd.DataFrame,
+    weights: dict,
+    window: int = 250,
+    alpha: float = 0.05,
+) -> pd.DataFrame:
+    """
+    Component VaR under multivariate normal with covariance matrix Sigma (rolling).
+
+    For each date t:
+      sigma_p = sqrt(w' Sigma w)
+      marginal_sigma = (Sigma w) / sigma_p
+      component_VaR_i = w_i * z_alpha * marginal_sigma_i
+
+    Returns a DataFrame of component VaR contributions (same units as returns),
+    indexed by date, columns=tickers.
+
+    Note: This is a parametric decomposition; does not require portfolio return series.
+    """
+    if not 0 < alpha < 1:
+        raise ValueError("alpha must be in (0,1).")
+
+    tickers = list(weights.keys())
+    r = asset_returns[tickers].dropna().copy()
+
+    w = pd.Series(weights, index=tickers, dtype=float)
+    w = w / w.sum()
+    wv = w.values.reshape(-1, 1)
+
+    z = norm.ppf(alpha)
+
+    rows = []
+    idx_vals = []
+
+    for i in range(window - 1, len(r)):
+        window_slice = r.iloc[i - window + 1 : i + 1]
+        sigma = window_slice.cov().values
+
+        sigma_w = sigma @ wv  # (n,1)
+        sigma_p = float(np.sqrt((wv.T @ sigma_w)[0, 0]))
+
+        if sigma_p == 0:
+            comp = np.zeros(len(tickers))
+        else:
+            marginal_sigma = (sigma_w.flatten() / sigma_p)  # (n,)
+            comp = (w.values * z * marginal_sigma)          # (n,)
+
+        rows.append(comp)
+        idx_vals.append(r.index[i])
+
+    out = pd.DataFrame(rows, index=pd.Index(idx_vals), columns=tickers)
+    out.name = f"ComponentVaR_{int((1-alpha)*100)}"
+    return out.reindex(asset_returns.index)
