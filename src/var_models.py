@@ -4,8 +4,9 @@ import numpy as np
 import pandas as pd
 from scipy.stats import norm
 
+TRADING_DAYS: int = 252
 
-def historical_var(returns: pd.Series, window: int = 250, alpha: float = 0.05) -> pd.Series:
+def historical_var(returns: pd.Series, window: int = TRADING_DAYS, alpha: float = 0.05) -> pd.Series:
     """
     Historical VaR on a return series.
     alpha=0.05 => 95% VaR threshold (5th percentile)
@@ -17,7 +18,7 @@ def historical_var(returns: pd.Series, window: int = 250, alpha: float = 0.05) -
 
 def parametric_var_normal(
     returns: pd.Series,
-    window: int = 250,
+    window: int = TRADING_DAYS,
     alpha: float = 0.05,
     use_mean: bool = True,
 ) -> pd.Series:
@@ -95,7 +96,7 @@ def parametric_var_ewma_normal(
 def parametric_var_cov_matrix(
     asset_returns: pd.DataFrame,
     weights: dict,
-    window: int = 250,
+    window: int = TRADING_DAYS,
     alpha: float = 0.05,
     use_mean: bool = True,
 ) -> pd.Series:
@@ -145,7 +146,7 @@ def parametric_var_cov_matrix(
     out = pd.Series(var_list, index=pd.Index(idx_list), name=f"VaR_Cov_{int((1-alpha)*100)}")
     return out.reindex(asset_returns.index)
 
-def historical_es(returns: pd.Series, window: int = 250, alpha: float = 0.05) -> pd.Series:
+def historical_es(returns: pd.Series, window: int = TRADING_DAYS, alpha: float = 0.05) -> pd.Series:
     """
     Historical Expected Shortfall (ES): average return in the tail beyond VaR.
     ES_t = mean( r | r <= VaR_alpha ) over rolling window.
@@ -163,7 +164,7 @@ def historical_es(returns: pd.Series, window: int = 250, alpha: float = 0.05) ->
 def component_var_cov_matrix(
     asset_returns: pd.DataFrame,
     weights: dict,
-    window: int = 250,
+    window: int = TRADING_DAYS,
     alpha: float = 0.05,
 ) -> pd.DataFrame:
     """
