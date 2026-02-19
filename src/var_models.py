@@ -91,3 +91,56 @@ def parametric_var_ewma_normal(
 
     # Reindex to original returns index (preserve any missing dates)
     return var.reindex(returns.index)
+
+def parametric_var_cov_matrix(
+    asset_returns: pd.DataFrame,
+    weights: dict,
+    window: int = 250,
+    alpha: float = 0.05,
+    use_mean: bool = True,
+) -> pd.Series:
+    """
+    Parametric VaR using rolling covariance matrix:
+      sigma_p(t) = sqrt(w^T Sigma(t) w)
+      mu_p(t) = rolling mean of portfolio returns (optional)
+      VaR(t) = mu_p(t) + z_alpha * sigma_p(t)
+
+    asset_returns: DataFrame with columns as tickers
+    weights: dict {ticker: weight}
+    """
+    if not 0 < alpha < 1:
+        raise ValueError("alpha must be in (0,1).")
+
+    tickers = list(weights.keys())
+    missing = [t for t in tickers if t not in asset_returns.columns]
+    if missing:
+        raise ValueError(f"Missing tickers in asset_returns: {missing}")
+
+    r = asset_returns[tickers].dropna().copy()
+
+    w = pd.Series(weights, index=tickers, dtype=float)
+    w = w / w.sum()
+    wv = w.values.reshape(-1, 1)
+
+    z = norm.ppf(alpha)
+
+    # Optional rolling mean of portfolio returns
+    if use_mean:
+        mu_p = (r @ w).rolling(window).mean()
+    else:
+        mu_p = 0.0
+
+    # Rolling covariance -> portfolio sigma -> VaR series
+    var_list = []
+    idx_list = []
+
+    # Use a loop for clarity (fast enough for 4 assets)
+    for i in range(window - 1, len(r)):
+        window_slice = r.iloc[i - window + 1 : i + 1]
+        sigma = window_slice.cov().values  # Sigma(t)
+        sigma_p = float(np.sqrt((wv.T @ sigma @ wv)[0, 0]))
+        idx_list.append(r.index[i])
+        var_list.append(mu_p.iloc[i] + z * sigma_p if use_mean else z * sigma_p)
+
+    out = pd.Series(var_list, index=pd.Index(idx_list), name=f"VaR_Cov_{int((1-alpha)*100)}")
+    return out.reindex(asset_returns.index)
