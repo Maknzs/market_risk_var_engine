@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import pandas as pd
-
+import numpy as np
+from scipy.stats import chi2
 
 def var_exceptions(returns: pd.Series, var_series: pd.Series) -> pd.Series:
     """
@@ -60,3 +61,45 @@ def exception_table(
         breaches = breaches.head(top_n)
 
     return breaches
+
+def kupiec_test_uc(breaches: pd.Series, alpha: float) -> dict:
+    """
+    Kupiec (1995) Unconditional Coverage (UC) test for VaR exceptions.
+
+    H0: exception probability == alpha
+    Inputs:
+      - breaches: boolean Series (True if realized < VaR)
+      - alpha: expected exception rate (e.g., 0.05 for 95% VaR)
+
+    Returns dict with LR statistic and p-value.
+    """
+    b = breaches.dropna().astype(bool)
+    n = int(b.shape[0])
+    x = int(b.sum())
+
+    if n == 0:
+        raise ValueError("No observations in breaches series.")
+
+    # empirical exception rate
+    phat = x / n
+
+    # Guard against log(0) issues for x=0 or x=n
+    eps = 1e-12
+    phat = min(max(phat, eps), 1 - eps)
+    p = min(max(alpha, eps), 1 - eps)
+
+    # Likelihood under H0 and under MLE
+    ll_h0 = (n - x) * np.log(1 - p) + x * np.log(p)
+    ll_mle = (n - x) * np.log(1 - phat) + x * np.log(phat)
+
+    lr_uc = -2.0 * (ll_h0 - ll_mle)
+    p_value = 1.0 - chi2.cdf(lr_uc, df=1)
+
+    return {
+        "n_obs": n,
+        "breaches": x,
+        "alpha": alpha,
+        "breach_rate": x / n,
+        "lr_uc": lr_uc,
+        "p_value": p_value,
+    }
