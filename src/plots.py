@@ -42,3 +42,44 @@ def plot_var_overlay(
         plt.savefig(outpath, dpi=150)
 
     plt.show()
+
+def plot_var_multi(
+    returns: pd.Series,
+    var_lines: Dict[str, pd.Series],
+    title: str,
+    outpath: Optional[str] = None,
+    mark_breaches_against: Optional[str] = None,
+) -> None:
+    """
+    Plot realized returns (or $ P&L) and multiple VaR threshold series.
+
+    var_lines: dict of {label: series}
+    mark_breaches_against: label key in var_lines to mark breaches (optional)
+    """
+    df = pd.DataFrame({"return": returns})
+    for label, s in var_lines.items():
+        df[label] = s
+
+    df = df.dropna()
+
+    plt.figure()
+    plt.plot(df.index, df["return"], label="Portfolio P&L")
+
+    for label in var_lines.keys():
+        plt.plot(df.index, df[label], label=label)
+
+    if mark_breaches_against and mark_breaches_against in df.columns:
+        breaches = df["return"] < df[mark_breaches_against]
+        plt.scatter(df.index[breaches], df.loc[breaches, "return"], label="Breaches", marker="x")
+
+    plt.title(title)
+    plt.xlabel("Date")
+    plt.ylabel("P&L ($)")
+    plt.legend()
+    plt.tight_layout()
+
+    if outpath:
+        Path(outpath).parent.mkdir(parents=True, exist_ok=True)
+        plt.savefig(outpath, dpi=150)
+
+    plt.show()
