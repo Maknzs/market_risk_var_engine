@@ -144,3 +144,18 @@ def parametric_var_cov_matrix(
 
     out = pd.Series(var_list, index=pd.Index(idx_list), name=f"VaR_Cov_{int((1-alpha)*100)}")
     return out.reindex(asset_returns.index)
+
+def historical_es(returns: pd.Series, window: int = 250, alpha: float = 0.05) -> pd.Series:
+    """
+    Historical Expected Shortfall (ES): average return in the tail beyond VaR.
+    ES_t = mean( r | r <= VaR_alpha ) over rolling window.
+    """
+    if not 0 < alpha < 1:
+        raise ValueError("alpha must be in (0,1).")
+
+    def es_func(x: pd.Series) -> float:
+        v = x.quantile(alpha)
+        tail = x[x <= v]
+        return float(tail.mean()) if len(tail) else float("nan")
+
+    return returns.rolling(window).apply(es_func, raw=False)
