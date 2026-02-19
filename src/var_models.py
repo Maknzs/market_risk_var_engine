@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 from scipy.stats import norm
 
@@ -34,3 +35,59 @@ def parametric_var_normal(
     sigma = returns.rolling(window).std(ddof=1)
 
     return mu + z * sigma
+
+def parametric_var_ewma_normal(
+    returns: pd.Series,
+    alpha: float = 0.05,
+    lam: float = 0.94,
+    use_mean: bool = False,
+    burn_in: int = 30,
+) -> pd.Series:
+    """
+    Parametric VaR using EWMA volatility (RiskMetrics-style) and Normal quantile.
+
+    EWMA variance recursion:
+      sigma2_t = lam * sigma2_{t-1} + (1-lam) * r_{t-1}^2
+
+    VaR threshold:
+      VaR_t = mu_t + z_alpha * sigma_t
+
+    Notes:
+    - use_mean=False is common in RiskMetrics (assume mean ~ 0 daily)
+    - burn_in: number of initial periods to set as NaN for stability
+    """
+    if not 0 < alpha < 1:
+        raise ValueError("alpha must be in (0,1).")
+    if not 0 < lam < 1:
+        raise ValueError("lam must be in (0,1).")
+
+    r = returns.dropna().astype(float)
+    z = norm.ppf(alpha)
+
+    # Initialize variance with sample variance of first ~60 obs (or all if shorter)
+    init_n = min(60, len(r))
+    if init_n < 2:
+        raise ValueError("Not enough return observations for EWMA initialization.")
+
+    sigma2 = np.empty(len(r))
+    sigma2[0] = float(r.iloc[:init_n].var(ddof=1))
+
+    # recursion uses lagged return
+    for t in range(1, len(r)):
+        sigma2[t] = lam * sigma2[t - 1] + (1.0 - lam) * (r.iloc[t - 1] ** 2)
+
+    sigma = pd.Series(np.sqrt(sigma2), index=r.index, name="ewma_sigma")
+
+    if use_mean:
+        mu = r.ewm(alpha=(1.0 - lam), adjust=False).mean()
+    else:
+        mu = 0.0
+
+    var = mu + z * sigma
+    var = pd.Series(var, index=r.index, name=f"VaR_EWMA_{int((1-alpha)*100)}")
+
+    if burn_in and burn_in > 0:
+        var.iloc[:burn_in] = np.nan
+
+    # Reindex to original returns index (preserve any missing dates)
+    return var.reindex(returns.index)
